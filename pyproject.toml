@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "finishline"
+version = "0.1.0"
+description = ""
+authors = ["rrustvold <rrustvold@compustar.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12, <3.13"
+pillow = "^10.2.0"
+av = "^11.0.0"
+python-dateutil = "^2.9.0.post0"
+black = "^24.2.0"
+pyinstaller = "^6.5.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
