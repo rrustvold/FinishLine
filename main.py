@@ -1,4 +1,3 @@
-# %%
 from datetime import datetime
 import math
 import tkinter as tk
@@ -9,7 +8,6 @@ from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
 
 
-# %%
 class FinishLine:
 
     window = tk.Tk()
@@ -383,17 +381,9 @@ class FinishLine:
         process_btn.pack(fill=tk.Y, side=tk.LEFT)
         process_frame.pack(fill=tk.X, side=tk.TOP)
 
-
-
-        # self.load_video()
-        # self.process()
         tk.mainloop()
 
 
 if __name__ == "__main__":
     finish_line = FinishLine()
     finish_line.main()
-    # container = av.open("./iphone.mp4")
-    # for frame in container.decode(video=0):
-    #     image = frame.to_image().rotate(-90)
-    #     break
