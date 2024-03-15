@@ -40,6 +40,7 @@ class FinishLine:
     direction = tk.IntVar(value=1)
 
     def rotate_ccw(self):
+        """Rotates the finish line counter clockwise"""
         self.line_pos_rotate += 5
         self.canvas.coords(
             self.line,
@@ -50,6 +51,7 @@ class FinishLine:
         )
 
     def rotate_cw(self):
+        """Rotates the finish line clockwise"""
         self.line_pos_rotate -= 5
         self.canvas.coords(
             self.line,
@@ -60,19 +62,25 @@ class FinishLine:
         )
 
     def rotate_image_cw(self):
+        """Rotates the preview image 90 degress clockwise"""
         self.rotation -= 90
         self.preview_image = self.preview_image.rotate(-90, expand=True)
         self.redraw()
 
     def rotate_image_ccw(self):
+        """Rotates the preview image 90 degress counter clockwise"""
         self.rotation += 90
         self.preview_image = self.preview_image.rotate(90, expand=True)
         self.redraw()
 
     def redraw(self):
+        """Redraws the preview image and finish line after rotating the preview image"""
         height = self.height
         self.height = self.width
         self.width = height
+        print(self.line_pos)
+        self.line_pos = int(self.width / 2)
+        print(self.line_pos)
         self.tk_image = ImageTk.PhotoImage(self.preview_image)
         self.canvas.itemconfig(self.preview, image=self.tk_image)
         self.canvas.coords(
@@ -82,15 +90,19 @@ class FinishLine:
             self.line_pos + self.line_pos_rotate,
             self.height,
         )
-
+        self.preview_slider.config(to=self.width, length=self.width)
+        self.preview_slider.set(self.line_pos)
+        self.update_preview_slider()
         self.canvas.config(scrollregion=(0, 0, self.width, self.height))
-
         self.canvas.pack()
-
+        
     def get_rotate_theta(self):
+        """Returns the current rotation angle of the finish line in degrees"""
         return math.atan2(self.line_pos_rotate, self.height / 2) * 180 / math.pi
 
     def process(self):
+        """Constructs the result image from the video and the finish line. Fills in the 
+        results tab with the result, the finish line, and UI elements."""
         container = av.open(self.file)
         num_frames = container.streams.video[0].frames
         out = Image.new("RGB", (num_frames, self.height), (255, 255, 255))
@@ -168,7 +180,7 @@ class FinishLine:
         else:
             x = self.slider.get()
 
-        self.cursor = self.result_canvas.create_line(x, 0, x, out.height, width=1)
+        self.cursor = self.result_canvas.create_line(x, 0, x, out.height, width=1, fill="#ffffff")
         self.result_canvas.pack(expand=True, fill=tk.BOTH)
 
         self.start_label = ttk.Label(
@@ -203,12 +215,14 @@ class FinishLine:
         self.update_stats()
 
     def update_stats(self):
+        """Updates the result tab's stats based on the inputs from the UI"""
         self.fps = int(float(self.fps_entry.get()))
         self.resolution_label.config(text=f"1 px = {round(1 / self.fps, 6)} seconds")
         self.start_time = parse(self.start_entry.get())
         self.update_cursor()
 
     def get_cursor_time(self):
+        """returns the time at which the result cursor is located in the result image"""
         if self.out_image:
             seconds_from_start = self.slider.get() / self.fps
             return (
@@ -216,6 +230,7 @@ class FinishLine:
             ).strftime("%H:%M:%S.%f")
 
     def update_cursor(self, *args, **kwargs):
+        """Updates the location of the cursor on the result tab"""
         if self.direction.get() > 0:
             x = self.out_image.width - self.slider.get()
         else:
@@ -226,6 +241,7 @@ class FinishLine:
         self.cursor_label.config(text=f"Current Position: {self.get_cursor_time()}")
 
     def save(self):
+        """Save dialog for saving the result image"""
         filename = f"Results"
         file = filedialog.asksaveasfile(
             mode="w", defaultextension=".jpg", initialfile=filename
@@ -235,6 +251,8 @@ class FinishLine:
             file.close()
 
     def get_first_frame_from_video(self):
+        """Opens the video's first frame and extracts some metadata for later use.
+        Returns the first frame as an image."""
         container = av.open(self.file)
         self.metadata = container.metadata
         self.length_seconds = container.duration / 10**6
@@ -256,10 +274,12 @@ class FinishLine:
             return frame.to_image()
 
     def load_preview(self, preview_image):
+        """Given the preview image, draws it onto the canvas. Draws the finish line. Creates the
+        slider control for the finish line."""
         self.tk_image = ImageTk.PhotoImage(preview_image)
         self.preview = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
         self.line = self.canvas.create_line(
-            self.line_pos, 0, self.line_pos, self.height, width=1, tags="line"
+            self.line_pos, 0, self.line_pos, self.height, width=1, tags="line", fill="#ffffff"
         )
         self.canvas.pack(expand=True, fill=tk.BOTH)
 
@@ -285,9 +305,13 @@ class FinishLine:
         )
 
     def load_video(self):
+        """Opens a file select dialog for the user to select a video. Loads a preview image
+        into the canvas. Draws the finish line and slider controls."""
         self.rotation = 0
         self.file = filedialog.askopenfilename()
-        # self.file = "test.mp4"
+        if not self.file:
+            return
+        
         self.preview_image = self.get_first_frame_from_video()
         self.width, self.height = self.preview_image.size
         self.line_pos = self.width / 2
@@ -319,6 +343,7 @@ class FinishLine:
         self.load_preview(self.preview_image)
 
     def main(self):
+        """Draws the UI and starts the main tkinter loop"""
         rotate_frame = ttk.Frame(self.tab_1)
         load_video_btn = ttk.Button(
             rotate_frame, text="Load Video", width=30, command=self.load_video
