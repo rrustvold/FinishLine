@@ -212,6 +212,8 @@ class FinishLine:
         )
         self.resolution_label.grid(row=2, column=0)
         self.update_stats()
+        # Move to the results tab
+        self.tab_control.select(1)
 
     def update_stats(self):
         """Updates the result tab's stats based on the inputs from the UI"""
