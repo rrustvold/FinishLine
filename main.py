@@ -78,9 +78,7 @@ class FinishLine:
         height = self.height
         self.height = self.width
         self.width = height
-        print(self.line_pos)
         self.line_pos = int(self.width / 2)
-        print(self.line_pos)
         self.tk_image = ImageTk.PhotoImage(self.preview_image)
         self.canvas.itemconfig(self.preview, image=self.tk_image)
         self.canvas.coords(
@@ -108,6 +106,7 @@ class FinishLine:
         out = Image.new("RGB", (num_frames, self.height), (255, 255, 255))
         frame_num = 0
         theta = self.get_rotate_theta()
+        container.streams.video[0].thread_type = "AUTO"
         for frame in container.decode(video=0):
             image = frame.to_image()
             if theta or self.rotation:
