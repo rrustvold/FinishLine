@@ -6,6 +6,7 @@ from PIL import Image, ImageTk
 import av
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
+from threading import Thread
 
 
 class FinishLine:
@@ -37,7 +38,19 @@ class FinishLine:
 
     out_image = None
 
+    # For tracking which radio button is selected
     direction = tk.IntVar(value=1)
+
+    # For the progress bar
+    progress = tk.IntVar(value=0)
+
+    # An array for holding all UI widgets that will need to be disabled
+    # during processing
+    ui_widgets = []
+
+    # For setting the users preferred timezone. Default to -7 cause that's
+    # where I live.
+    utc_offset = tk.IntVar(value=-7)
 
     def rotate_ccw(self):
         """Rotates the finish line counter clockwise"""
@@ -118,6 +131,7 @@ class FinishLine:
                 x = frame_num
 
             out.paste(line, (x, 0, x + 1, self.height))
+            self.progress.set(int(100 * frame_num / num_frames))
             frame_num += 1
 
         if self.direction.get() > 0:
@@ -212,8 +226,15 @@ class FinishLine:
         )
         self.resolution_label.grid(row=2, column=0)
         self.update_stats()
+        self.process_finished()
+
+    def process_finished(self):
         # Move to the results tab
         self.tab_control.select(1)
+
+        # Re-enable disabled widgets
+        for widget in self.ui_widgets:
+            widget.config(state="normal")
 
     def update_stats(self):
         """Updates the result tab's stats based on the inputs from the UI"""
@@ -262,6 +283,7 @@ class FinishLine:
         start_time_str = self.metadata.get("creation_time", "")
         if start_time_str:
             self.start_time = parse(start_time_str)
+            self.start_time += relativedelta(hours=self.utc_offset.get())
 
             if fps := self.metadata.get("com.android.capture.fps"):
                 self.fps = int(float(fps))
@@ -294,6 +316,7 @@ class FinishLine:
         )
         self.preview_slider.set(round(preview_image.width / 2))
         self.preview_slider.pack(side=tk.TOP, anchor=tk.NW)
+        self.ui_widgets.append(self.preview_slider)
 
     def update_preview_slider(self, *args, **kwargs):
         self.line_pos = self.preview_slider.get()
@@ -325,7 +348,7 @@ class FinishLine:
                 self.preview_canvas_frame, scrollregion=(0, 0, self.width, self.height)
             )
             self.preview_hbar = ttk.Scrollbar(
-                self.preview_canvas_frame, orient=tk.HORIZONTAL
+                self.preview_canvas_frame, orient=tk.HORIZONTAL,
             )
             self.preview_hbar.pack(side=tk.BOTTOM, fill=tk.X)
             self.preview_hbar.config(command=self.canvas.xview)
@@ -343,27 +366,38 @@ class FinishLine:
 
         self.load_preview(self.preview_image)
 
+    def process_clicked(self):
+        # Start the processing in its own thread so that we don't lock up the window
+        # and we can draw the progress bar.
+        for widget in self.ui_widgets:
+            widget.config(state="disabled")
+
+        Thread(target=self.process).start()
+
     def main(self):
         """Draws the UI and starts the main tkinter loop"""
         rotate_frame = ttk.Frame(self.tab_1)
         load_video_btn = ttk.Button(
             rotate_frame, text="Load Video", width=30, command=self.load_video
         )
+        self.ui_widgets.append(load_video_btn)
         load_video_btn.pack(fill=tk.Y, side=tk.LEFT)
         rotate_image_ccw_btn = ttk.Button(
             rotate_frame,
             text="Rotate Video 90 deg CCW",
-            width=20,
+            width=30,
             command=self.rotate_image_ccw,
         )
+        self.ui_widgets.append(rotate_image_ccw_btn)
         rotate_image_ccw_btn.pack(fill=tk.Y, side=tk.LEFT)
 
         rotate_image_cw_btn = ttk.Button(
             rotate_frame,
             text="Rotate Video 90 deg CW",
-            width=20,
+            width=30,
             command=self.rotate_image_cw,
         )
+        self.ui_widgets.append(rotate_image_cw_btn)
         rotate_image_cw_btn.pack(fill=tk.Y, side=tk.LEFT)
 
         rotate_frame.pack(fill=tk.X, side=tk.TOP)
@@ -375,6 +409,7 @@ class FinishLine:
             width=20,
             command=self.rotate_ccw,
         )
+        self.ui_widgets.append(rotate_ccw_btn)
         rotate_ccw_btn.pack(fill=tk.Y, side=tk.LEFT)
 
         rotate_cw_btn = ttk.Button(
@@ -383,6 +418,7 @@ class FinishLine:
             width=20,
             command=self.rotate_cw,
         )
+        self.ui_widgets.append(rotate_cw_btn)
         rotate_cw_btn.pack(fill=tk.Y, side=tk.LEFT)
 
         line_frame.pack(fill=tk.X, side=tk.TOP)
@@ -394,17 +430,30 @@ class FinishLine:
         radio_1 = tk.Radiobutton(
             radio_frame, text="Left to Right", variable=self.direction, value=1
         )
+        self.ui_widgets.append(radio_1)
         radio_1.pack(fill=tk.X, side=tk.LEFT)
         radio_2 = tk.Radiobutton(
             radio_frame, text="Right to Left", variable=self.direction, value=-1
         )
+        self.ui_widgets.append(radio_2)
         radio_2.pack(fill=tk.X, side=tk.LEFT)
+
+        utc_offset_frame = ttk.Frame(self.tab_1)
+        utc_offset_frame.pack(fill=tk.X, side=tk.TOP)
+        utc_label = tk.Label(utc_offset_frame, text="UTC Offset")
+        utc_label.pack(fill=tk.X, side=tk.LEFT)
+        
+        utc_offset = ttk.Spinbox(utc_offset_frame, from_=-24, to=24, wrap=True, textvariable=self.utc_offset)
+        utc_offset.pack(fill=tk.X, side=tk.LEFT)
 
         process_frame = ttk.Frame(self.tab_1)
         process_btn = ttk.Button(
-            process_frame, text="GO!", width=10, command=self.process
+            process_frame, text="GO!", width=10, command=self.process_clicked
         )
-        process_btn.pack(fill=tk.Y, side=tk.LEFT)
+        self.ui_widgets.append(process_btn)
+        process_btn.pack(fill=tk.X, side=tk.LEFT)
+        progress_bar = ttk.Progressbar(process_frame, length=300, variable=self.progress, maximum=100)
+        progress_bar.pack(fill=tk.X, side=tk.LEFT)
         process_frame.pack(fill=tk.X, side=tk.TOP)
 
         tk.mainloop()
