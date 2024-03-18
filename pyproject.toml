@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "finishline"
-version = "0.1.0"
+version = "0.1.1"
 description = ""
 authors = ["rrustvold <rrustvold@compustar.com>"]
 readme = "README.md"
