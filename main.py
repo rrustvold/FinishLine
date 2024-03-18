@@ -52,6 +52,9 @@ class FinishLine:
     # where I live.
     utc_offset = tk.IntVar(value=-7)
 
+    # A flag that tracks if a video is being processed
+    is_processing = False
+
     def rotate_ccw(self):
         """Rotates the finish line counter clockwise"""
         self.line_pos_rotate += 5
@@ -114,6 +117,7 @@ class FinishLine:
     def process(self):
         """Constructs the result image from the video and the finish line. Fills in the 
         results tab with the result, the finish line, and UI elements."""
+        self.is_processing = True
         container = av.open(self.file)
         num_frames = container.streams.video[0].frames
         out = Image.new("RGB", (num_frames, self.height), (255, 255, 255))
@@ -133,6 +137,10 @@ class FinishLine:
             out.paste(line, (x, 0, x + 1, self.height))
             self.progress.set(int(100 * frame_num / num_frames))
             frame_num += 1
+            if self.is_processing is False:
+                # Cancel was pressed
+                self.process_finished()
+                return 
 
         if self.direction.get() > 0:
             from_ = out.width
@@ -226,15 +234,22 @@ class FinishLine:
         )
         self.resolution_label.grid(row=2, column=0)
         self.update_stats()
+        # Move to the results tab
+        self.tab_control.select(1)
         self.process_finished()
 
     def process_finished(self):
-        # Move to the results tab
-        self.tab_control.select(1)
-
         # Re-enable disabled widgets
         for widget in self.ui_widgets:
             widget.config(state="normal")
+
+        # Disable the cancel button
+        self.cancel_btn.config(state="disabled")
+
+        # Reset the progress bar
+        self.progress.set(0)
+
+        self.is_processing = False
 
     def update_stats(self):
         """Updates the result tab's stats based on the inputs from the UI"""
@@ -266,10 +281,10 @@ class FinishLine:
         """Save dialog for saving the result image"""
         filename = f"Results"
         file = filedialog.asksaveasfile(
-            mode="w", defaultextension=".jpg", initialfile=filename
+            mode="wb", defaultextension=".png", initialfile=filename
         )
         if file:
-            self.out_image.save(file)
+            self.out_image.save(file, "PNG")
             file.close()
 
     def get_first_frame_from_video(self):
@@ -305,15 +320,20 @@ class FinishLine:
             self.line_pos, 0, self.line_pos, self.height, width=1, tags="line", fill="#ffffff"
         )
         self.canvas.pack(expand=True, fill=tk.BOTH)
-
-        self.preview_slider = tk.Scale(
-            self.preview_canvas_frame,
-            from_=0,
-            to=preview_image.width,
-            orient=tk.HORIZONTAL,
-            length=preview_image.width,
-            command=self.update_preview_slider,
-        )
+        if not hasattr(self, "preview_slider"):
+            self.preview_slider = tk.Scale(
+                self.preview_canvas_frame,
+                from_=0,
+                to=preview_image.width,
+                orient=tk.HORIZONTAL,
+                length=preview_image.width,
+                command=self.update_preview_slider,
+            )
+        else:
+            self.preview_slider.config(
+                to=preview_image.width,
+                length=preview_image.width,
+            )
         self.preview_slider.set(round(preview_image.width / 2))
         self.preview_slider.pack(side=tk.TOP, anchor=tk.NW)
         self.ui_widgets.append(self.preview_slider)
@@ -367,12 +387,22 @@ class FinishLine:
         self.load_preview(self.preview_image)
 
     def process_clicked(self):
+        if not hasattr(self, "file"):
+            # Nothing has been loaded yet.
+            return
+        
         # Start the processing in its own thread so that we don't lock up the window
         # and we can draw the progress bar.
         for widget in self.ui_widgets:
             widget.config(state="disabled")
 
+        # enable the cancel button
+        self.cancel_btn.config(state="normal")
+
         Thread(target=self.process).start()
+
+    def cancel_processing(self):
+        self.is_processing = False
 
     def main(self):
         """Draws the UI and starts the main tkinter loop"""
@@ -448,13 +478,18 @@ class FinishLine:
 
         process_frame = ttk.Frame(self.tab_1)
         process_btn = ttk.Button(
-            process_frame, text="GO!", width=10, command=self.process_clicked
+            process_frame, text="Go", width=10, command=self.process_clicked
         )
         self.ui_widgets.append(process_btn)
         process_btn.pack(fill=tk.X, side=tk.LEFT)
         progress_bar = ttk.Progressbar(process_frame, length=300, variable=self.progress, maximum=100)
         progress_bar.pack(fill=tk.X, side=tk.LEFT)
         process_frame.pack(fill=tk.X, side=tk.TOP)
+
+        self.cancel_btn = ttk.Button(
+            process_frame, text="Cancel", width=10, command=self.cancel_processing, state="disabled"
+        )
+        self.cancel_btn.pack(fill=tk.X, side=tk.LEFT)
 
         tk.mainloop()
 
