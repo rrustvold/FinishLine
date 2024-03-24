@@ -7,18 +7,187 @@ import av
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
 from threading import Thread
+import time
+from multiprocessing import Pool
+import numpy as np
 
+
+class Result:
+    def __init__(self, tab_control, out, direction, start_time, fps):
+        self.tab = ttk.Frame(tab_control)
+        self.tab_control = tab_control
+        self.tab_control.add(self.tab, text=f'{start_time.strftime("   %H:%M:%S   ")}')
+        self.result_canvas = None
+        self.result_canvas_frame = ttk.Frame(self.tab)
+        self.result_canvas_frame.pack(expand=True, fill=tk.BOTH)
+        self.fps = fps
+        self.start_time = start_time
+        self.direction = direction
+        if direction > 0:
+            from_ = out.width
+            to = 0
+        else:
+            from_ = 0
+            to = out.width
+
+        self.result_canvas = tk.Canvas(
+            self.result_canvas_frame, scrollregion=(0, 0, out.width, out.height)
+        )
+        self.result_hbar = ttk.Scrollbar(
+            self.result_canvas_frame, orient=tk.HORIZONTAL
+        )
+        self.result_hbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.result_hbar.config(command=self.result_canvas.xview)
+
+        self.result_vbar = ttk.Scrollbar(
+            self.result_canvas_frame, orient=tk.VERTICAL
+        )
+        self.result_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.result_vbar.config(command=self.result_canvas.yview)
+
+        self.result_canvas.config(
+            xscrollcommand=self.result_hbar.set, yscrollcommand=self.result_vbar.set
+        )
+
+        self.slider = tk.Scale(
+            self.result_canvas_frame,
+            from_=from_,
+            to=to,
+            orient=tk.HORIZONTAL,
+            length=out.width,
+            command=self.update_cursor,
+        )
+        self.slider.pack(side=tk.TOP, anchor=tk.NW)
+
+        self.stats_frame = ttk.Frame(self.tab)
+        self.stats_frame.pack()
+
+        self.save_btn = ttk.Button(self.stats_frame, text="Save", command=self.save)
+        self.save_btn.grid(row=3, column=0)
+
+        self.tk_image_result = ImageTk.PhotoImage(out)
+        self.out_image = out
+
+        self.result = self.result_canvas.create_image(
+            0, 0, anchor=tk.NW, image=self.tk_image_result
+        )
+        if direction > 0:
+            x = out.width - self.slider.get()
+        else:
+            x = self.slider.get()
+
+        self.cursor = self.result_canvas.create_line(x, 0, x, out.height, width=1, fill="#ffffff")
+        self.result_canvas.pack(expand=True, fill=tk.BOTH)
+
+        self.start_label = ttk.Label(
+            self.stats_frame, text=f"Start Time: "
+        )
+        self.start_label.grid(row=0, column=0)
+
+        self.start_entry = ttk.Entry(self.stats_frame)
+        self.start_entry.insert(3, f"{self.start_time.strftime('%H:%M:%S')}")
+        self.start_entry.grid(row=0, column=1)
+
+        self.cursor_label = ttk.Label(
+            self.stats_frame, text=f"Current Position: {self.get_cursor_time()}"
+        )
+        self.cursor_label.grid(row=0, column=2)
+
+        self.fps_label = ttk.Label(self.stats_frame, text="FPS: ")
+        self.fps_label.grid(row=1, column=0)
+        self.fps_entry = ttk.Entry(self.stats_frame)
+        self.fps_entry.insert(3, f"{self.fps}")
+        self.fps_entry.grid(row=1, column=1)
+
+        self.update_btn = ttk.Button(
+            self.stats_frame, text="Update", command=self.update_stats
+        )
+        self.update_btn.grid(row=2, column=1)
+
+        self.resolution_label = ttk.Label(
+            self.stats_frame,
+        )
+        self.resolution_label.grid(row=2, column=0)
+        self.update_stats()
+
+    def get_name(self):
+        resolution = round(1 / self.fps, 6)
+        duration = self.out_image.width * resolution
+        end_time = self.start_time + relativedelta(seconds=duration)
+        return f'{self.start_time.strftime("%H:%M:%S")} - {end_time.strftime("%H:%M:%S")}'
+
+    def update_stats(self):
+        """Updates the result tab's stats based on the inputs from the UI"""
+        self.fps = int(float(self.fps_entry.get()))
+        resolution = round(1 / self.fps, 6)
+        self.resolution_label.config(text=f"1 px = {resolution} seconds")
+        self.start_time = parse(self.start_entry.get())
+        self.tab_control.tab(self.tab, text=self.get_name())
+        self.update_cursor()
+
+    def get_cursor_time(self):
+        """returns the time at which the result cursor is located in the result image"""
+        if self.out_image:
+            seconds_from_start = self.slider.get() / self.fps
+            return (
+                self.start_time + relativedelta(seconds=seconds_from_start)
+            ).strftime("%H:%M:%S.%f")
+
+    def update_cursor(self, *args, **kwargs):
+        """Updates the location of the cursor on the result tab"""
+        if self.direction > 0:
+            x = self.out_image.width - self.slider.get()
+        else:
+            x = self.slider.get()
+
+        self.result_canvas.coords(self.cursor, x, 0, x, self.out_image.height)
+
+        self.cursor_label.config(text=f"Current Position: {self.get_cursor_time()}")
+
+    def save(self):
+        """Save dialog for saving the result image"""
+        filename = f"Results {self.get_name().replace(':', '-')}"
+        file = filedialog.asksaveasfile(
+            mode="wb", defaultextension=".png", initialfile=filename
+        )
+        if file:
+            self.out_image.save(file, "PNG")
+            file.close()
+
+
+def sub_process(
+    frame, theta, rotation, line_pos, height, direction, num_frames, frame_num,
+):
+    if rotation or theta:
+        frame = av.VideoFrame.from_ndarray(frame[0], format=frame[1])
+        image = frame.to_image()
+        image = image.rotate(-theta + rotation, expand=True)
+
+        line = image.crop(
+            (line_pos, 0, line_pos + 1, height)
+        )
+        line = np.array(line)
+    else:
+        # If we don't need to rotate, we can save ourselves some effort
+        line = np.ndarray((height, 1, 3))
+        col = frame[0][:, line_pos]
+        line[:, 0, :] = col
+
+    if direction > 0:
+        x = num_frames - frame_num - 1
+    else:
+        x = frame_num
+
+    return line, x
 
 class FinishLine:
-
     window = tk.Tk()
     window.title("Finish Line")
     tab_control = ttk.Notebook(window)
     tab_1 = ttk.Frame(tab_control)
-    tab_2 = ttk.Frame(tab_control)
-
+    
     tab_control.add(tab_1, text="Preview")
-    tab_control.add(tab_2, text="Results")
+    
     tab_control.pack(expand=1, fill="both")
 
     canvas = None
@@ -32,11 +201,7 @@ class FinishLine:
     preview_canvas_frame = ttk.Frame(tab_1)
     preview_canvas_frame.pack(expand=True, fill=tk.BOTH)
 
-    result_canvas = None
-    result_canvas_frame = ttk.Frame(tab_2)
-    result_canvas_frame.pack(expand=True, fill=tk.BOTH)
-
-    out_image = None
+    results = []
 
     # For tracking which radio button is selected
     direction = tk.IntVar(value=1)
@@ -115,127 +280,79 @@ class FinishLine:
         return math.atan2(self.line_pos_rotate, self.height / 2) * 180 / math.pi
 
     def process(self):
-        """Constructs the result image from the video and the finish line. Fills in the 
-        results tab with the result, the finish line, and UI elements."""
+        """Constructs the result image from the video and the finish line. 
+        Fills in the results tab with the result, the finish line, and UI 
+        elements."""
+        start = time.time()
         self.is_processing = True
         container = av.open(self.file)
-        num_frames = container.streams.video[0].frames
+        num_frames = int(container.streams.video[0].frames)
         out = Image.new("RGB", (num_frames, self.height), (255, 255, 255))
+        result_array = np.ndarray((self.height, num_frames, 3))
+        results = []
         frame_num = 0
         theta = self.get_rotate_theta()
         container.streams.video[0].thread_type = "AUTO"
-        for frame in container.decode(video=0):
-            image = frame.to_image()
-            if theta or self.rotation:
-                image = image.rotate(-theta + self.rotation, expand=True)
-            line = image.crop((self.line_pos, 0, self.line_pos + 1, self.height))
-            if self.direction.get() > 0:
-                x = num_frames - frame_num - 1
-            else:
-                x = frame_num
+        with Pool() as pool:
+            for frame in container.decode(video=0):
+                results.append(pool.apply_async(
+                    sub_process, (
+                        (frame.to_ndarray(format="rgb24"), "rgb24"), 
+                        theta,
+                        self.rotation,
+                        self.line_pos,
+                        self.height,
+                        self.direction.get(),
+                        num_frames, 
+                        frame_num, 
+                    ), 
+                    error_callback=lambda error: print(error)
+                ))
+                # When all frames have been added to the pool, the the bar will be at
+                # 50%
+                self.progress.set(int(50 * frame_num / num_frames))
+                frame_num += 1
+                if self.is_processing is False:
+                    # Cancel was pressed
+                    pool.close()
+                    pool.terminate()
+                    self.process_finished()
+                    return 
+            
+            pool.close()
+            finished_processes = set()
+            num_processes = len(results)
+            while len(finished_processes) != num_processes:
+                if self.is_processing is False:
+                    # Cancel button was pressed
+                    pool.terminate()
+                    self.process_finished()
+                    return
 
-            out.paste(line, (x, 0, x + 1, self.height))
-            self.progress.set(int(100 * frame_num / num_frames))
-            frame_num += 1
-            if self.is_processing is False:
-                # Cancel was pressed
-                self.process_finished()
-                return 
+                for i, result in enumerate(results):
+                    if i not in finished_processes and result.ready():
+                        array, x = result.get()
+                        result_array[:, x, :] = array[:, 0, :]
+                        finished_processes.add(i)
+                        self.progress.set(
+                            50 + 
+                            int(50 * len(finished_processes) / num_processes)
+                        )
 
-        if self.direction.get() > 0:
-            from_ = out.width
-            to = 0
-        else:
-            from_ = 0
-            to = out.width
-
-        if not self.result_canvas:
-            self.result_canvas = tk.Canvas(
-                self.result_canvas_frame, scrollregion=(0, 0, out.width, out.height)
+        out = Image.fromarray(result_array.astype("uint8"), mode="RGB")
+            
+        self.results.append(
+            Result(
+                self.tab_control, 
+                out, self.direction.get(), 
+                self.start_time,
+                self.fps
             )
-            self.result_hbar = ttk.Scrollbar(
-                self.result_canvas_frame, orient=tk.HORIZONTAL
-            )
-            self.result_hbar.pack(side=tk.BOTTOM, fill=tk.X)
-            self.result_hbar.config(command=self.result_canvas.xview)
-
-            self.result_vbar = ttk.Scrollbar(
-                self.result_canvas_frame, orient=tk.VERTICAL
-            )
-            self.result_vbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.result_vbar.config(command=self.result_canvas.yview)
-
-            self.result_canvas.config(
-                xscrollcommand=self.result_hbar.set, yscrollcommand=self.result_vbar.set
-            )
-
-            self.slider = tk.Scale(
-                self.result_canvas_frame,
-                from_=from_,
-                to=to,
-                orient=tk.HORIZONTAL,
-                length=out.width,
-                command=self.update_cursor,
-            )
-            self.slider.pack(side=tk.TOP, anchor=tk.NW)
-
-            self.stats_frame = ttk.Frame(self.tab_2)
-            self.stats_frame.pack()
-
-            self.save_btn = ttk.Button(self.stats_frame, text="Save", command=self.save)
-            self.save_btn.grid(row=3, column=0)
-
-        else:
-            self.result_canvas.delete("all")
-            self.result_canvas.config(scrollregion=(0, 0, out.width, out.height))
-            self.slider.config(from_=from_, to=to, length=out.width)
-
-        self.tk_image_result = ImageTk.PhotoImage(out)
-        self.out_image = out
-
-        self.result = self.result_canvas.create_image(
-            0, 0, anchor=tk.NW, image=self.tk_image_result
         )
-        if self.direction.get() > 0:
-            x = out.width - self.slider.get()
-        else:
-            x = self.slider.get()
-
-        self.cursor = self.result_canvas.create_line(x, 0, x, out.height, width=1, fill="#ffffff")
-        self.result_canvas.pack(expand=True, fill=tk.BOTH)
-
-        self.start_label = ttk.Label(
-            self.stats_frame, text=f"Start Time: "
-        )
-        self.start_label.grid(row=0, column=0)
-
-        self.start_entry = ttk.Entry(self.stats_frame)
-        self.start_entry.insert(3, f"{self.start_time.strftime('%H:%M:%S')}")
-        self.start_entry.grid(row=0, column=1)
-
-        self.cursor_label = ttk.Label(
-            self.stats_frame, text=f"Current Position: {self.get_cursor_time()}"
-        )
-        self.cursor_label.grid(row=0, column=2)
-
-        self.fps_label = ttk.Label(self.stats_frame, text="FPS: ")
-        self.fps_label.grid(row=1, column=0)
-        self.fps_entry = ttk.Entry(self.stats_frame)
-        self.fps_entry.insert(3, f"{self.fps}")
-        self.fps_entry.grid(row=1, column=1)
-
-        self.update_btn = ttk.Button(
-            self.stats_frame, text="Update", command=self.update_stats
-        )
-        self.update_btn.grid(row=1, column=2)
-
-        self.resolution_label = ttk.Label(
-            self.stats_frame,
-        )
-        self.resolution_label.grid(row=2, column=0)
-        self.update_stats()
+        finish = time.time()
+        print(f"That took {finish - start} s")
         # Move to the results tab
-        self.tab_control.select(1)
+        self.tab_control.select(len(self.results))
         self.process_finished()
 
     def process_finished(self):
@@ -251,41 +368,6 @@ class FinishLine:
 
         self.is_processing = False
 
-    def update_stats(self):
-        """Updates the result tab's stats based on the inputs from the UI"""
-        self.fps = int(float(self.fps_entry.get()))
-        self.resolution_label.config(text=f"1 px = {round(1 / self.fps, 6)} seconds")
-        self.start_time = parse(self.start_entry.get())
-        self.update_cursor()
-
-    def get_cursor_time(self):
-        """returns the time at which the result cursor is located in the result image"""
-        if self.out_image:
-            seconds_from_start = self.slider.get() / self.fps
-            return (
-                self.start_time + relativedelta(seconds=seconds_from_start)
-            ).strftime("%H:%M:%S.%f")
-
-    def update_cursor(self, *args, **kwargs):
-        """Updates the location of the cursor on the result tab"""
-        if self.direction.get() > 0:
-            x = self.out_image.width - self.slider.get()
-        else:
-            x = self.slider.get()
-
-        self.result_canvas.coords(self.cursor, x, 0, x, self.out_image.height)
-
-        self.cursor_label.config(text=f"Current Position: {self.get_cursor_time()}")
-
-    def save(self):
-        """Save dialog for saving the result image"""
-        filename = f"Results"
-        file = filedialog.asksaveasfile(
-            mode="wb", defaultextension=".png", initialfile=filename
-        )
-        if file:
-            self.out_image.save(file, "PNG")
-            file.close()
 
     def get_first_frame_from_video(self):
         """Opens the video's first frame and extracts some metadata for later use.
