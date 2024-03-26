@@ -8,21 +8,46 @@ from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
 from threading import Thread
 import time
-from multiprocessing import Pool
+from multiprocessing import Pool, freeze_support
 import numpy as np
 
 
+DEFAULT_BIB_TIMES_FILENAME = "bib_times.csv"
+
+
+class BibTimes:
+    def __init__(self):
+        self.bib_times = []
+        self.bib_results_filename = DEFAULT_BIB_TIMES_FILENAME
+
+    def add(self, bib_time):
+        self.bib_times.append(bib_time)
+        self.bib_times = sorted(self.bib_times, key=lambda bib_time: bib_time[1])
+        try:
+            filename, extension = self.bib_results_filename.split(".")
+        except Exception:
+            filename = self.bib_results_filename
+            extension = "csv"
+
+        with open(f"{filename}.csv", "w") as out_file:
+            for bib_time in self.bib_times:
+                out_file.write(f"{bib_time[0]}, {bib_time[1]}\n")
+
+
 class Result:
-    def __init__(self, tab_control, out, direction, start_time, fps):
+    def __init__(
+            self, tab_control, out, direction, start_time, fps, bib_times
+        ):
         self.tab = ttk.Frame(tab_control)
         self.tab_control = tab_control
-        self.tab_control.add(self.tab, text=f'{start_time.strftime("   %H:%M:%S   ")}')
+        self.tab_control.add(self.tab, text=f'{start_time.strftime(".   %H:%M:%S   .")}')
         self.result_canvas = None
         self.result_canvas_frame = ttk.Frame(self.tab)
         self.result_canvas_frame.pack(expand=True, fill=tk.BOTH)
         self.fps = fps
         self.start_time = start_time
         self.direction = direction
+        self.bib_times = bib_times
         if direction > 0:
             from_ = out.width
             to = 0
@@ -89,15 +114,31 @@ class Result:
         self.start_entry.grid(row=0, column=1)
 
         self.cursor_label = ttk.Label(
-            self.stats_frame, text=f"Current Position: {self.get_cursor_time()}"
+            self.stats_frame, text=f"Current Position"
         )
         self.cursor_label.grid(row=0, column=2)
+
+        self.cursor_position =ttk.Label(
+            self.stats_frame, text=f"{self.get_cursor_time()}"
+        )
+        self.cursor_position.grid(row=0, column=3)
 
         self.fps_label = ttk.Label(self.stats_frame, text="FPS: ")
         self.fps_label.grid(row=1, column=0)
         self.fps_entry = ttk.Entry(self.stats_frame)
         self.fps_entry.insert(3, f"{self.fps}")
         self.fps_entry.grid(row=1, column=1)
+
+        self.bib_number_label = ttk.Label(self.stats_frame, text="Bib number")
+        self.bib_number_label.grid(row=1, column=2)
+
+        self.bib_number = ttk.Entry(self.stats_frame)
+        self.bib_number.grid(row=1, column=3)
+
+        self.enter_btn = ttk.Button(
+            self.stats_frame, text="Enter number", command=self.enter_number
+        )
+        self.enter_btn.grid(row=1, column=4)
 
         self.update_btn = ttk.Button(
             self.stats_frame, text="Update", command=self.update_stats
@@ -142,7 +183,7 @@ class Result:
 
         self.result_canvas.coords(self.cursor, x, 0, x, self.out_image.height)
 
-        self.cursor_label.config(text=f"Current Position: {self.get_cursor_time()}")
+        self.cursor_position.config(text=f"{self.get_cursor_time()}")
 
     def save(self):
         """Save dialog for saving the result image"""
@@ -154,6 +195,24 @@ class Result:
             self.out_image.save(file, "PNG")
             file.close()
 
+    def enter_number(self):
+        if not self.bib_number.get():
+            return
+        
+        try:
+            self.bib_times.add((self.bib_number.get(), self.get_cursor_time()))
+        except Exception as e:
+            error = f"Failed to add bib number. Most likely because the csv is open in another window. Close it, and try again. {e}"
+            popup = tk.Tk()
+            popup.wm_title("!")
+            label = ttk.Label(popup, text=error)
+            label.pack(side="top", fill="x", pady=10)
+            B1 = ttk.Button(popup, text="Okay", command = popup.destroy)
+            B1.pack()
+            popup.mainloop()
+        else:
+            self.bib_number.delete(0, tk.END)
+        
 
 def sub_process(
     frame, theta, rotation, line_pos, height, direction, num_frames, frame_num,
@@ -219,6 +278,27 @@ class FinishLine:
 
     # A flag that tracks if a video is being processed
     is_processing = False
+
+    bib_times = BibTimes()
+    bib_results_filename = tk.StringVar()
+
+
+    def enter_key(self, event):
+        # Get active tab
+        active_tab_name = str(self.tab_control.nametowidget(self.tab_control.select()))
+
+        count = 0
+        for tab in self.tab_control.tabs():
+            if active_tab_name == tab:
+                break
+            count += 1
+        else:
+            return
+
+        # the first tab "preview" should not apply
+        if count > 0:
+            self.results[count - 1].enter_number()
+
 
     def rotate_ccw(self):
         """Rotates the finish line counter clockwise"""
@@ -346,7 +426,8 @@ class FinishLine:
                 self.tab_control, 
                 out, self.direction.get(), 
                 self.start_time,
-                self.fps
+                self.fps,
+                self.bib_times
             )
         )
         finish = time.time()
@@ -434,10 +515,11 @@ class FinishLine:
         """Opens a file select dialog for the user to select a video. Loads a preview image
         into the canvas. Draws the finish line and slider controls."""
         self.rotation = 0
-        self.file = filedialog.askopenfilename()
-        if not self.file:
+        file = filedialog.askopenfilename()
+        if not file:
             return
         
+        self.file = file
         self.preview_image = self.get_first_frame_from_video()
         self.width, self.height = self.preview_image.size
         self.line_pos = self.width / 2
@@ -485,6 +567,10 @@ class FinishLine:
 
     def cancel_processing(self):
         self.is_processing = False
+
+    def bib_results_filename_update(self):
+        self.bib_times.bib_results_filename = self.bib_results_filename.get()
+        return True
 
     def main(self):
         """Draws the UI and starts the main tkinter loop"""
@@ -558,6 +644,19 @@ class FinishLine:
         utc_offset = ttk.Spinbox(utc_offset_frame, from_=-24, to=24, wrap=True, textvariable=self.utc_offset)
         utc_offset.pack(fill=tk.X, side=tk.LEFT)
 
+        bib_results_frame = ttk.Frame(self.tab_1)
+        bib_results_frame.pack(fill=tk.X, side=tk.TOP)
+        bib_results_label = tk.Label(bib_results_frame, text="Bib Results Filename")
+        bib_results_label.pack(fill=tk.X, side=tk.LEFT)
+        bib_results_filename = ttk.Entry(
+            bib_results_frame, 
+            textvariable=self.bib_results_filename, 
+            validate="focusout", 
+            validatecommand=self.bib_results_filename_update
+        )
+        bib_results_filename.insert(0, DEFAULT_BIB_TIMES_FILENAME)
+        bib_results_filename.pack(fill=tk.X, side=tk.LEFT)
+
         process_frame = ttk.Frame(self.tab_1)
         process_btn = ttk.Button(
             process_frame, text="Go", width=10, command=self.process_clicked
@@ -573,9 +672,11 @@ class FinishLine:
         )
         self.cancel_btn.pack(fill=tk.X, side=tk.LEFT)
 
+        self.window.bind("<Return>", self.enter_key)
         tk.mainloop()
 
 
 if __name__ == "__main__":
+    freeze_support()
     finish_line = FinishLine()
     finish_line.main()
